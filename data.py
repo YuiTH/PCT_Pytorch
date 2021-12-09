@@ -108,7 +108,7 @@ class text2cap(Dataset):
             pointcloud = translate_pointcloud(pointcloud)
             np.random.shuffle(pointcloud)
         caption_ids = self.tokenizer.encode(caption, max_length=self.args.max_length, pad_to_max_length=True)
-        return pointcloud, caption
+        return pointcloud, caption_ids
 
     @staticmethod
     def _load_text2shape_csv(path):
