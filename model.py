@@ -52,6 +52,7 @@ class Pct(nn.Module):
         xyz = x.permute(0, 2, 1)
         batch_size, _, _ = x.size()
         # B, D, N
+        # x:32,3,1024
         x = F.relu(self.bn1(self.conv1(x)))
         # B, D, N
         x = F.relu(self.bn2(self.conv2(x)))
@@ -64,6 +65,7 @@ class Pct(nn.Module):
 
         x = self.pt_last(feature_1)
         x = torch.cat([x, feature_1], dim=1)
+        # x:[32,1024,256]
         x = self.conv_fuse(x)
         x = F.adaptive_max_pool1d(x, 1).view(batch_size, -1)
         x = F.leaky_relu(self.bn6(self.linear1(x)), negative_slope=0.2)

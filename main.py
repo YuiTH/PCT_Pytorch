@@ -66,6 +66,7 @@ def train(args, io):
             opt.zero_grad()
 
             start_time = time.time()
+            import pdb;pdb.set_trace()
             logits = model(data)
             loss = criterion(logits, label)
             loss.backward()
