@@ -1,11 +1,13 @@
+import csv
 import json
 import os
 import glob
+from dataclasses import dataclass
 from pathlib import Path
 
 import h5py
 import numpy as np
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader
 from transformers import AutoTokenizer
 
 
@@ -85,43 +87,70 @@ class ModelNet40(Dataset):
         return self.data.shape[0]
 
 
-class text2cap(Dataset):
+class Text2Cap(Dataset):
     def __init__(self, args, partition='train'):
+        # args.text2shape_csv = './data/text2shape.csv'
+        # args.shapenet_dir = './data/shapenetcorev2_hdf5_2048/'
+        # args.tokenizer = 'microsoft/prophetnet-base-uncased'
+        # args.num_points = 1024
         self.args = args
         self.num_points = args.num_points
         self.split = partition
         self.text2shape = self._load_text2shape_csv(args.text2shape_csv)  # both test and train are in text2shape
         self.shapenet = self._load_shapenet(args.shapenet_dir, split=partition, num_points=args.num_points)
         # assert len(self.text2shape) == len(self.shapenet), 'not all shap in text2shape appears in  shapenetcore'
-        self.shape_id_list = list(self.shapenet.keys())
+        self._drop_shape()  # drop shape not in currently split.
+        self.caption_id_list = list(self.text2shape.keys())
         self.tokenizer = AutoTokenizer.from_pretrained(args.tokenizer)
 
     def __len__(self):
-        return len(self.shape_id_list)
+        return len(self.caption_id_list)
 
     def __getitem__(self, idx):
-        shape_id = self.shape_id_list[idx]
+        caption_id = self.caption_id_list[idx]
+        shape_id = self.text2shape[caption_id]['shape_id']
         pointcloud = self.shapenet[shape_id]
-        caption = self.text2shape[shape_id]['description']
+        caption = self.text2shape[caption_id]['description']
         if self.split == 'train':
             pointcloud = random_point_dropout(pointcloud)  # open for dgcnn not for our idea  for all
             pointcloud = translate_pointcloud(pointcloud)
             np.random.shuffle(pointcloud)
-        caption_ids = self.tokenizer.encode(caption, max_length=self.args.max_length, pad_to_max_length=True)
-        return pointcloud, caption_ids
+        caption_toks = self.tokenizer(caption, max_length=self.args.max_length, padding='max_length',return_tensors='pt')
+        caption_ids = caption_toks.input_ids.squeeze(0)
+        attention_mask = caption_toks.attention_mask.squeeze(0)
+        return pointcloud, caption_ids, attention_mask
+
+    def _drop_shape(self):
+        used_shape_ids = set()
+        to_be_dropped = []
+        for cap_id in self.text2shape:
+            shape_id = self.text2shape[cap_id]['shape_id']
+            if shape_id not in self.shapenet:
+                to_be_dropped.append(cap_id)
+            else:
+                used_shape_ids.add(shape_id)
+        for cap_id in to_be_dropped:
+            del self.text2shape[cap_id]
+
+        to_be_dropped = []
+        for shape_id in self.shapenet:
+            if shape_id not in used_shape_ids:
+                to_be_dropped.append(shape_id)
+        for shape_id in to_be_dropped:
+            del self.shapenet[shape_id]
 
     @staticmethod
     def _load_text2shape_csv(path):
         samples = {}
-        with open(path, 'r') as f:
-            f.readline()  # skip the first line
-            for line in f:
-                sample = line.strip().split(',')
-                samples[sample[1]] = {
-                    'description': sample[2],
-                    'id': samples[0],
-                    'category': sample[3],
+        with open(path, 'r', newline='', encoding='utf8') as csvfile:
+            reader = csv.DictReader(csvfile)
+            for row in reader:
+                samples[row['id']] = {
+                    'description': row['description'],
+                    'shape_id': row['modelId'],
+                    'category': row['category'],
                 }
+
         return samples
 
     def _load_shapenet(self, shapenet_dir, split="train", num_points=1024):
@@ -136,14 +165,48 @@ class text2cap(Dataset):
             with h5py.File(h5_path, 'r') as f:
                 for i, npy_path in enumerate(id2file):
                     obj_id = npy_path.split('/')[-1].split('.')[0]
-                    if obj_id in self.text2shape.keys():
-                        dataset[obj_id] = f['data'][i][:num_points].copy()  # 2048, 3
+                    dataset[obj_id] = f['data'][i][:num_points].copy()  # 2048, 3
         return dataset
 
 
+
+class ArgMock:
+    text2shape_csv = '/mnt/finetune/text2shape/captions.tablechair.csv'
+    shapenet_dir = '/mnt/finetune/text2shape/shapenetcorev2_hdf5_2048/'
+    tokenizer = 'microsoft/prophetnet-large-uncased'
+    num_points = 1024
+    batch_size = 32
+    max_length = 256
+
+
 if __name__ == '__main__':
-    train = ModelNet40(1024)
-    test = ModelNet40(1024, 'test')
-    for data, label in train:
-        print(data.shape)
-        print(label.shape)
+    # train = ModelNet40(1024)
+    # test = ModelNet40(1024, 'test')
+    # for data, label in train:
+    #     print(data.shape)
+    #     print(label.shape)
+    args = ArgMock()
+    train = Text2Cap(args, partition='train')
+    val = Text2Cap(args, partition='val')
+    test = Text2Cap(args, partition='test')
+    print(len(train))
+    print(len(val))
+    print(len(test))
+
+    train_loader = DataLoader(train, num_workers=8,
+                              batch_size=args.batch_size, shuffle=True, drop_last=True)
+    val_loader = DataLoader(val, num_workers=8,
+                              batch_size=args.batch_size, shuffle=True, drop_last=True)
+    test_loader = DataLoader(test, num_workers=8,
+                              batch_size=args.batch_size, shuffle=True, drop_last=True)
+    print(len(train_loader))
+    sample = next(iter(train_loader))
+    print(sample)
+
+    print(len(val_loader))
+    sample = next(iter(val_loader))
+    print(sample)
+
+    print(len(test_loader))
+    sample = next(iter(test_loader))
+    print(f"{sample[0].shape} pcl, {sample[1].shape} caption")
