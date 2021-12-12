@@ -39,7 +39,7 @@ class MyBartModel(BartPretrainedModel):
 
     def forward(
             self,
-            input_pcl=None,
+            input_ids=None,
             attention_mask=None,
             decoder_input_ids=None,
             decoder_attention_mask=None,
@@ -55,10 +55,9 @@ class MyBartModel(BartPretrainedModel):
             output_hidden_states=None,
             return_dict=None,
     ):
-
         # different to other models, Bart automatically creates decoder_input_ids from
         # input_ids if no decoder_input_ids are provided
-        assert decoder_input_ids is not None
+        # assert decoder_input_ids is not None
 
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
@@ -67,13 +66,12 @@ class MyBartModel(BartPretrainedModel):
         use_cache = use_cache if use_cache is not None else self.config.use_cache
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
-
-        encoder_outputs_hidden_states = self.encoder(input_pcl)
+        encoder_outputs = self.encoder(input_ids) if encoder_outputs is None else encoder_outputs
         # decoder outputs consists of (dec_features, past_key_value, dec_hidden, dec_attn)
         decoder_outputs = self.decoder(
             input_ids=decoder_input_ids,
             attention_mask=decoder_attention_mask,
-            encoder_hidden_states=encoder_outputs_hidden_states,
+            encoder_hidden_states=encoder_outputs[0],
             encoder_attention_mask=attention_mask,
             head_mask=decoder_head_mask,
             cross_attn_head_mask=cross_attn_head_mask,
@@ -95,6 +93,8 @@ class MyBartModel(BartPretrainedModel):
             decoder_attentions=decoder_outputs.attentions,
             cross_attentions=decoder_outputs.cross_attentions,
         )
+
+
 class MyBartForConditionalGeneration(BartPretrainedModel):
     base_model_prefix = "model"
     _keys_to_ignore_on_load_missing = [r"final_logits_bias", r"lm_head\.weight"]
@@ -135,7 +135,7 @@ class MyBartForConditionalGeneration(BartPretrainedModel):
 
     def forward(
             self,
-            input_pcl=None,
+            input_ids=None,
             attention_mask=None,
             decoder_input_ids=None,
             decoder_attention_mask=None,
@@ -169,7 +169,7 @@ class MyBartForConditionalGeneration(BartPretrainedModel):
                 )
 
         outputs = self.model(
-            input_pcl,
+            input_ids,
             attention_mask=attention_mask,
             decoder_input_ids=decoder_input_ids,
             encoder_outputs=encoder_outputs,
@@ -208,6 +208,7 @@ class MyBartForConditionalGeneration(BartPretrainedModel):
             encoder_attentions=outputs.encoder_attentions,
         )
 
+
 if __name__ == '__main__':
     args = ArgMock()
     args.tokenizer = 'facebook/bart-large-cnn'
@@ -220,5 +221,8 @@ if __name__ == '__main__':
         config=BartConfig.from_pretrained('facebook/bart-large-cnn'), encoder=pct_encoder)
     sample_pcl, sample_cap, sample_attn_mask = sample_pcl.cuda(), sample_cap.cuda(), sample_attn_mask.cuda()
     model = model.cuda()
-    loss = model(input_pcl=sample_pcl, labels=sample_cap, decoder_attention_mask=sample_attn_mask)
+    model.eval()
+    with torch.no_grad():
+        loss = model(input_ids=sample_pcl, labels=sample_cap, decoder_attention_mask=sample_attn_mask)
+        res = model.generate(sample_pcl)
     print(model)

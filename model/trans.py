@@ -96,11 +96,10 @@ class MyProphetNetModel(ProphetNetPreTrainedModel):
         #         output_hidden_states=output_hidden_states,
         #         return_dict=return_dict,
         #     )
-        encoder_outputs_hidden_states = self.encoder(input_pcl)
+        encoder_outputs_hidden_states = self.encoder(input_pcl)[0]
 
         # only encoder_outputs.last_hidden_states available:[1,38,1024]
         # decoder outputs consists of (dec_features, past_key_values, dec_hidden, dec_attn)
-        # TODO: encoder_attention_mask should be all ones.
         decoder_outputs = self.decoder(
             input_ids=decoder_input_ids,
             attention_mask=decoder_attention_mask,

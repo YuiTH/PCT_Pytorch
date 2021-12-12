@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from transformers.modeling_outputs import BaseModelOutput
+
 from util import sample_and_group
 
 
@@ -49,13 +51,14 @@ class PctEncoder(nn.Module):
         # self.dp2 = nn.Dropout(p=args.dropout)
         # self.linear3 = nn.Linear(256, output_channels)
 
-    def forward(self, x):
+    def forward(self, x, **kargs):
         #
         # b, 3, npoint, nsample
         # conv2d 3 -> 128 channels 1, 1
         # b * npoint, c, nsample
         # permute reshape
         xyz = x.clone()
+        import pdb; pdb.set_trace()
         x = x.permute(0, 2, 1)
         # B, D, N
         # x:32,3,1024
@@ -77,7 +80,8 @@ class PctEncoder(nn.Module):
         x = self.conv_fuse(x)  # x:[32,1024,256] 32 for Batch size, 1024 for feature dim, 256 for point number
 
         # TODO: too much simple? add MLP?
-        return x.permute(0, 2, 1)  # x:[32,256,1024] [B, N, D]
+        output = BaseModelOutput(last_hidden_state=x.permute(0, 2, 1))
+        return output  # x:[32,256,1024] [B, N, D]
 
 
 class Point_Transformer_Last(nn.Module):

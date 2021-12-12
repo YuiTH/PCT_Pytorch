@@ -177,6 +177,7 @@ class ArgMock:
     num_points = 1024
     batch_size = 32
     max_length = 256
+    val_batch_size = 48
 
 
 if __name__ == '__main__':
