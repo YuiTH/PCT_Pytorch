@@ -209,7 +209,8 @@ class MyBartForConditionalGeneration(BartPretrainedModel):
             encoder_attentions=outputs.encoder_attentions,
         )
 
-    def predict(self, input_pcl, tokenizer, beam_size, **kwargs):
+    @torch.no_grad()
+    def predict(self, input_pcl, tokenizer, beam_size, max_length, **kwargs):
 
         encoder_outputs = self.model.encoder(input_pcl)
         encoder_hidden_states = encoder_outputs[0]
@@ -218,42 +219,46 @@ class MyBartForConditionalGeneration(BartPretrainedModel):
         zero = torch.cuda.LongTensor(1).fill_(0)
         for i in range(input_pcl.shape[0]):
             context = encoder_hidden_states[i]  # current sample encoder hidden states
-            beam = Beam(beam_size, tokenizer.sos_id, tokenizer.eos_id)
+            beam = Beam(beam_size, tokenizer.bos_token_id, tokenizer.eos_token_id)
             beam_input_ids = beam.getCurrentState()
             context = context.repeat(1, beam_size, 1)  # encoder last hidden state
-            for _ in range(self.args.max_length):
+            for _ in range(max_length):
                 if beam.done():
                     break
                 attn_mask = torch.ones(beam_input_ids.shape).to(context.device)
-                out = self.model.decoder(beam_input_ids, attention_mask=attn_mask,encoder_hidden_states=context)
-                logits = out.logits
-                beam.advance(out)
+                out = self.forward(decoder_input_ids=beam_input_ids, encoder_outputs=context,
+                                   decoder_attention_mask=attn_mask)
+                logits = out.logits[:, -1, :]
+                beam.advance(logits)
                 beam_input_ids.data.copy_(beam_input_ids.data.index_select(0, beam.getCurrentOrigin()))
                 beam_input_ids = torch.cat((beam_input_ids, beam.getCurrentState()), -1)
             hyp = beam.getHyp(beam.getFinal())
             pred = beam.buildTargetTokens(hyp)[:beam_size]
-            pred = [torch.cat([x.view(-1) for x in p] + [zero] * (self.max_length - len(p))).view(1, -1) for p in pred]
+            pred = [torch.cat([x.view(-1) for x in p] + [zero] * (max_length - len(p))).view(1, -1) for p in pred]
             preds.append(torch.cat(pred, 0).unsqueeze(0))
 
         preds = torch.cat(preds, 0)
-        return preds
+        return preds[:, 0, :]  # return best prediction. Original preds has shape (batch_size, beam_size, max_length)
 
 
 if __name__ == '__main__':
     args = ArgMock()
     args.tokenizer = 'facebook/bart-large-cnn'
     train_dataset = Text2Cap(args, partition='train')
-    train_loader = DataLoader(train_dataset, num_workers=8,
+    train_loader = DataLoader(train_dataset, num_workers=1,
                               batch_size=args.batch_size, shuffle=True, drop_last=True)
     sample_pcl, sample_cap, sample_attn_mask = next(iter(train_loader))
     pct_encoder = PctEncoder(args)
     model = MyBartForConditionalGeneration(
         config=BartConfig.from_pretrained('facebook/bart-large-cnn'), encoder=pct_encoder)
+    model.load_state_dict(torch.load('/home/v-bolunyao/pycharm/PCT_Pytorch/output_scratch/checkpoint-30800-0.2355/pytorch_model.bin'))
     sample_pcl, sample_cap, sample_attn_mask = sample_pcl.cuda(), sample_cap.cuda(), sample_attn_mask.cuda()
     model = model.cuda()
     model.eval()
     with torch.no_grad():
-        loss = model(input_ids=sample_pcl, labels=sample_cap, decoder_attention_mask=sample_attn_mask)
-        res = model.predict(sample_pcl[0])
+        # loss = model(input_ids=sample_pcl, labels=sample_cap, decoder_attention_mask=sample_attn_mask)
+        res = model.predict(sample_pcl, train_dataset.tokenizer, beam_size=1, max_length=50)
+        print(res)
+        print(train_dataset.tokenizer.decode(res[0]))
 
-    print(model)
+    # print(model)

@@ -57,8 +57,10 @@ class PctEncoder(nn.Module):
         # conv2d 3 -> 128 channels 1, 1
         # b * npoint, c, nsample
         # permute reshape
+        # if x.dim() == 2:
+        #     x = x.unsqueeze(0)
         xyz = x.clone()
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
         x = x.permute(0, 2, 1)
         # B, D, N
         # x:32,3,1024

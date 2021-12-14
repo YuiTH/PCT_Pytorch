@@ -14,7 +14,7 @@ from data import ArgMock, Text2Cap
 # from evaluate import evaluate
 from model.pcl_bart import MyBartForConditionalGeneration
 from model.pct_model import PctEncoder
-from model.trans import MyProphetNetForConditionalGeneration
+from model.pcl_prophet import MyProphetNetForConditionalGeneration
 
 # logging
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
