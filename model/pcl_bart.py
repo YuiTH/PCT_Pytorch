@@ -211,30 +211,25 @@ class MyBartForConditionalGeneration(BartPretrainedModel):
 
     def predict(self, input_pcl, tokenizer, beam_size, **kwargs):
 
-        encoder_output = self.model.encoder(input_pcl)
+        encoder_outputs = self.model.encoder(input_pcl)
+        encoder_hidden_states = encoder_outputs[0]
         # Predict
         preds = []
         zero = torch.cuda.LongTensor(1).fill_(0)
         for i in range(input_pcl.shape[0]):
-            context = encoder_output[:, i:i + 1]  # WTH
-            # context_mask = source_mask[i:i + 1, :]  # Zero will be unchanged.
+            context = encoder_hidden_states[i]  # current sample encoder hidden states
             beam = Beam(beam_size, tokenizer.sos_id, tokenizer.eos_id)
             beam_input_ids = beam.getCurrentState()
-            context = context.repeat(1, beam_size, 1)
-            # context_mask = context_mask.repeat(self.beam_size, 1)
+            context = context.repeat(1, beam_size, 1)  # encoder last hidden state
             for _ in range(self.args.max_length):
                 if beam.done():
                     break
-                attn_mask = -1e4 * (1 - self.bias[:beam_input_ids.shape[1], :beam_input_ids.shape[1]])
-                tgt_embeddings = self.decoder.embeddings(beam_input_ids).permute([1, 0, 2]).contiguous()
-                out = self.decoder(tgt_embeddings, context, tgt_mask=attn_mask,
-                                   memory_key_padding_mask=(1 - context_mask).bool())
-                out = torch.tanh(self.dense(out))
-                hidden_states = out.permute([1, 0, 2]).contiguous()[:, -1, :]
-                out = self.lsm(self.lm_head(hidden_states)).data
+                attn_mask = torch.ones(beam_input_ids.shape).to(context.device)
+                out = self.model.decoder(beam_input_ids, attention_mask=attn_mask,encoder_hidden_states=context)
+                logits = out.logits
                 beam.advance(out)
-                input_ids.data.copy_(input_ids.data.index_select(0, beam.getCurrentOrigin()))
-                input_ids = torch.cat((input_ids, beam.getCurrentState()), -1)
+                beam_input_ids.data.copy_(beam_input_ids.data.index_select(0, beam.getCurrentOrigin()))
+                beam_input_ids = torch.cat((beam_input_ids, beam.getCurrentState()), -1)
             hyp = beam.getHyp(beam.getFinal())
             pred = beam.buildTargetTokens(hyp)[:beam_size]
             pred = [torch.cat([x.view(-1) for x in p] + [zero] * (self.max_length - len(p))).view(1, -1) for p in pred]
