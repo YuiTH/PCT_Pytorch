@@ -7,8 +7,9 @@ from transformers.modeling_outputs import Seq2SeqModelOutput, Seq2SeqLMOutput
 from transformers.models.bart.modeling_bart import BartDecoder, shift_tokens_right
 
 from data import ArgMock, Text2Cap
+from model.beam_search import Beam
 from model.pct_model import PctEncoder
-from model.trans import MyProphetNetForConditionalGeneration
+from model.pcl_prophet import MyProphetNetForConditionalGeneration
 
 
 class MyBartModel(BartPretrainedModel):
@@ -208,6 +209,40 @@ class MyBartForConditionalGeneration(BartPretrainedModel):
             encoder_attentions=outputs.encoder_attentions,
         )
 
+    def predict(self, input_pcl, tokenizer, beam_size, **kwargs):
+
+        encoder_output = self.model.encoder(input_pcl)
+        # Predict
+        preds = []
+        zero = torch.cuda.LongTensor(1).fill_(0)
+        for i in range(input_pcl.shape[0]):
+            context = encoder_output[:, i:i + 1]  # WTH
+            # context_mask = source_mask[i:i + 1, :]  # Zero will be unchanged.
+            beam = Beam(beam_size, tokenizer.sos_id, tokenizer.eos_id)
+            beam_input_ids = beam.getCurrentState()
+            context = context.repeat(1, beam_size, 1)
+            # context_mask = context_mask.repeat(self.beam_size, 1)
+            for _ in range(self.args.max_length):
+                if beam.done():
+                    break
+                attn_mask = -1e4 * (1 - self.bias[:beam_input_ids.shape[1], :beam_input_ids.shape[1]])
+                tgt_embeddings = self.decoder.embeddings(beam_input_ids).permute([1, 0, 2]).contiguous()
+                out = self.decoder(tgt_embeddings, context, tgt_mask=attn_mask,
+                                   memory_key_padding_mask=(1 - context_mask).bool())
+                out = torch.tanh(self.dense(out))
+                hidden_states = out.permute([1, 0, 2]).contiguous()[:, -1, :]
+                out = self.lsm(self.lm_head(hidden_states)).data
+                beam.advance(out)
+                input_ids.data.copy_(input_ids.data.index_select(0, beam.getCurrentOrigin()))
+                input_ids = torch.cat((input_ids, beam.getCurrentState()), -1)
+            hyp = beam.getHyp(beam.getFinal())
+            pred = beam.buildTargetTokens(hyp)[:beam_size]
+            pred = [torch.cat([x.view(-1) for x in p] + [zero] * (self.max_length - len(p))).view(1, -1) for p in pred]
+            preds.append(torch.cat(pred, 0).unsqueeze(0))
+
+        preds = torch.cat(preds, 0)
+        return preds
+
 
 if __name__ == '__main__':
     args = ArgMock()
@@ -224,5 +259,6 @@ if __name__ == '__main__':
     model.eval()
     with torch.no_grad():
         loss = model(input_ids=sample_pcl, labels=sample_cap, decoder_attention_mask=sample_attn_mask)
-        res = model.generate(sample_pcl)
+        res = model.predict(sample_pcl[0])
+
     print(model)
