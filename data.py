@@ -119,7 +119,7 @@ class Text2Cap(Dataset):
             pointcloud = random_point_dropout(pointcloud)  # open for dgcnn not for our idea  for all
             pointcloud = translate_pointcloud(pointcloud)
             np.random.shuffle(pointcloud)
-        caption_toks = self.tokenizer(caption, max_length=self.args.max_length, padding='max_length',
+        caption_toks = self.tokenizer(caption, max_length=self.args.max_length, padding='max_length', truncation=True,
                                       return_tensors='pt')
         caption_ids = caption_toks.input_ids.squeeze(0)
         attention_mask = caption_toks.attention_mask.squeeze(0)
