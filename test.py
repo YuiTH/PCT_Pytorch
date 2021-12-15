@@ -137,7 +137,7 @@ def main(args):
     for batch in bar:
         batch = tuple(t.to(device) for t in batch)
         sample_pcl, sample_cap, sample_attn_mask = batch
-        preds = model.predict(sample_pcl, test_dataset.tokenizer, beam_size=1, max_length=50)
+        preds = model.predict(sample_pcl, test_dataset.tokenizer, beam_size=1, max_length=80)
         for idx, pred in enumerate(preds):
             pred_text = test_dataset.tokenizer.decode(pred.cpu(), skip_special_tokens=True)
             gold_text = test_dataset.tokenizer.decode(sample_cap[idx].cpu(), skip_special_tokens=True)
