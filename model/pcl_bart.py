@@ -10,6 +10,7 @@ from data import ArgMock, Text2Cap
 from model.beam_search import Beam
 from model.pct_model import PctEncoder
 from model.pcl_prophet import MyProphetNetForConditionalGeneration
+from torchvision.models import resnet50
 
 
 class MyBartModel(BartPretrainedModel):
@@ -19,6 +20,12 @@ class MyBartModel(BartPretrainedModel):
         padding_idx, vocab_size = config.pad_token_id, config.vocab_size
         self.shared = nn.Embedding(vocab_size, config.d_model, padding_idx)
 
+        self.resnet = resnet50(pretrained=True)
+        self.resnet_head = nn.Linear(1000, 1024)
+        self.resnet_head = nn.Sequential(
+            nn.Linear(1000, 1024),
+            nn.LeakyReLU(negative_slope=0.2)
+        )
         self.encoder = encoder
         self.decoder = BartDecoder(config, self.shared)
 
@@ -41,6 +48,7 @@ class MyBartModel(BartPretrainedModel):
     def forward(
             self,
             input_ids=None,
+            input_img=None,
             attention_mask=None,
             decoder_input_ids=None,
             decoder_attention_mask=None,
@@ -67,12 +75,20 @@ class MyBartModel(BartPretrainedModel):
         use_cache = use_cache if use_cache is not None else self.config.use_cache
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
-        encoder_outputs = self.encoder(input_ids) if encoder_outputs is None else encoder_outputs
+        if encoder_outputs is None:
+            img_embedding = self.resnet(input_img)
+            img_embedding = self.resnet_head(img_embedding).unsqueeze(1)
+            # check here
+            encoder_outputs = self.encoder(input_ids) if encoder_outputs is None else encoder_outputs
+            encoder_outputs = encoder_outputs[0]
+            encoder_outputs = torch.cat((img_embedding, encoder_outputs), dim=1)
+        else:
+            encoder_outputs = encoder_outputs[0]
         # decoder outputs consists of (dec_features, past_key_value, dec_hidden, dec_attn)
         decoder_outputs = self.decoder(
             input_ids=decoder_input_ids,
             attention_mask=decoder_attention_mask,
-            encoder_hidden_states=encoder_outputs[0],
+            encoder_hidden_states=encoder_outputs,
             encoder_attention_mask=attention_mask,
             head_mask=decoder_head_mask,
             cross_attn_head_mask=cross_attn_head_mask,
@@ -137,6 +153,7 @@ class MyBartForConditionalGeneration(BartPretrainedModel):
     def forward(
             self,
             input_ids=None,
+            input_img=None,
             attention_mask=None,
             decoder_input_ids=None,
             decoder_attention_mask=None,
@@ -171,6 +188,7 @@ class MyBartForConditionalGeneration(BartPretrainedModel):
 
         outputs = self.model(
             input_ids,
+            input_img,
             attention_mask=attention_mask,
             decoder_input_ids=decoder_input_ids,
             encoder_outputs=encoder_outputs,
@@ -210,10 +228,13 @@ class MyBartForConditionalGeneration(BartPretrainedModel):
         )
 
     @torch.no_grad()
-    def predict(self, input_pcl, tokenizer, beam_size, max_length, **kwargs):
+    def predict(self, input_pcl, input_img, tokenizer, beam_size, max_length, **kwargs):
 
         encoder_outputs = self.model.encoder(input_pcl)
         encoder_hidden_states = encoder_outputs[0]
+        img_embedding = self.model.resnet(input_img)
+        img_embedding = self.model.resnet_head(img_embedding).unsqueeze(1)
+        encoder_hidden_states = torch.cat((img_embedding, encoder_hidden_states), dim=1)
         # Predict
         preds = []
         zero = torch.cuda.LongTensor(1).fill_(0)
@@ -244,21 +265,24 @@ class MyBartForConditionalGeneration(BartPretrainedModel):
 if __name__ == '__main__':
     args = ArgMock()
     args.tokenizer = 'facebook/bart-large-cnn'
+    args.shapenet_pic_dir = "/home/v-bolunyao/data/nrrd_256_filter_div_64_solid/"
     train_dataset = Text2Cap(args, partition='train')
     train_loader = DataLoader(train_dataset, num_workers=1,
                               batch_size=args.batch_size, shuffle=True, drop_last=True)
-    sample_pcl, sample_cap, sample_attn_mask = next(iter(train_loader))
+    sample_pcl, sample_img, sample_cap, sample_attn_mask = next(iter(train_loader))
     pct_encoder = PctEncoder(args)
     model = MyBartForConditionalGeneration(
         config=BartConfig.from_pretrained('facebook/bart-large-cnn'), encoder=pct_encoder)
-    model.load_state_dict(torch.load('/home/v-bolunyao/pycharm/PCT_Pytorch/output_scratch/checkpoint-30800-0.2355/pytorch_model.bin'))
-    sample_pcl, sample_cap, sample_attn_mask = sample_pcl.cuda(), sample_cap.cuda(), sample_attn_mask.cuda()
+    # model.load_state_dict(torch.load('/home/v-bolunyao/pycharm/PCT_Pytorch/output_scratch/checkpoint-30800-0.2355/pytorch_model.bin'))
+    sample_pcl, sample_img, sample_cap, sample_attn_mask = sample_pcl.cuda(), sample_img.cuda(), sample_cap.cuda(), sample_attn_mask.cuda()
     model = model.cuda()
     model.eval()
     with torch.no_grad():
-        # loss = model(input_ids=sample_pcl, labels=sample_cap, decoder_attention_mask=sample_attn_mask)
-        res = model.predict(sample_pcl, train_dataset.tokenizer, beam_size=1, max_length=50)
-        print(res)
+        # loss = model(input_ids=sample_pcl, input_img=sample_img, labels=sample_cap,
+        #              decoder_attention_mask=sample_attn_mask)
+        res = model.predict(sample_pcl, sample_img, train_dataset.tokenizer, beam_size=1, max_length=50)
+        # print(res)
         print(train_dataset.tokenizer.decode(res[0]))
+        # print(loss)
 
     # print(model)

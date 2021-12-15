@@ -3,12 +3,15 @@ import json
 import os
 import glob
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 import h5py
 import numpy as np
+import torchvision.transforms as transforms
 from torch.utils.data import Dataset, DataLoader
 from transformers import AutoTokenizer
+from PIL import Image
 
 
 def download():
@@ -98,6 +101,9 @@ class Text2Cap(Dataset):
         self.split = partition
         self.text2shape = self._load_text2shape_csv(args.text2shape_csv)  # both test and train are in text2shape
         self.shapenet = self._load_shapenet(args.shapenet_dir, split=partition, num_points=args.num_points)
+        self.transforms = transforms.Compose(
+            [transforms.ToTensor(),
+             transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
         # assert len(self.text2shape) == len(self.shapenet), 'not all shap in text2shape appears in  shapenetcore'
         self._drop_shape()  # drop shape not in currently split.
         self.caption_id_list = list(self.text2shape.keys())
@@ -123,7 +129,22 @@ class Text2Cap(Dataset):
                                       return_tensors='pt')
         caption_ids = caption_toks.input_ids.squeeze(0)
         attention_mask = caption_toks.attention_mask.squeeze(0)
-        return pointcloud, caption_ids, attention_mask
+        img = self.load_image(shape_id).clone()
+        return pointcloud, img, caption_ids, attention_mask
+
+    @lru_cache(maxsize=100)
+    def load_image(self, shape_id):
+        image_path = os.path.join(self.args.shapenet_pic_dir, f'{shape_id}.png')
+        img = self.pil_loader(image_path)
+        return self.transforms(img)
+
+
+    @staticmethod
+    def pil_loader(path: str) -> Image.Image:
+        # open path as file to avoid ResourceWarning (https://github.com/python-pillow/Pillow/issues/835)
+        with open(path, "rb") as f:
+            img = Image.open(f)
+            return img.convert("RGB")
 
     def _drop_shape(self):
         used_shape_ids = set()
