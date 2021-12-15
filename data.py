@@ -106,6 +106,10 @@ class Text2Cap(Dataset):
     def __len__(self):
         return len(self.caption_id_list)
 
+    def get_shape_id(self, idx):
+        caption_id = self.caption_id_list[idx]
+        return self.text2shape[caption_id]['shape_id']
+
     def __getitem__(self, idx):
         caption_id = self.caption_id_list[idx]
         shape_id = self.text2shape[caption_id]['shape_id']
@@ -115,7 +119,8 @@ class Text2Cap(Dataset):
             pointcloud = random_point_dropout(pointcloud)  # open for dgcnn not for our idea  for all
             pointcloud = translate_pointcloud(pointcloud)
             np.random.shuffle(pointcloud)
-        caption_toks = self.tokenizer(caption, max_length=self.args.max_length, padding='max_length',return_tensors='pt')
+        caption_toks = self.tokenizer(caption, max_length=self.args.max_length, padding='max_length',
+                                      return_tensors='pt')
         caption_ids = caption_toks.input_ids.squeeze(0)
         attention_mask = caption_toks.attention_mask.squeeze(0)
         return pointcloud, caption_ids, attention_mask
@@ -169,7 +174,6 @@ class Text2Cap(Dataset):
         return dataset
 
 
-
 class ArgMock:
     text2shape_csv = '/mnt/finetune/text2shape/captions.tablechair.csv'
     shapenet_dir = '/mnt/finetune/text2shape/shapenetcorev2_hdf5_2048/'
@@ -197,9 +201,9 @@ if __name__ == '__main__':
     train_loader = DataLoader(train, num_workers=8,
                               batch_size=args.batch_size, shuffle=True, drop_last=True)
     val_loader = DataLoader(val, num_workers=8,
-                              batch_size=args.batch_size, shuffle=True, drop_last=True)
+                            batch_size=args.batch_size, shuffle=True, drop_last=True)
     test_loader = DataLoader(test, num_workers=8,
-                              batch_size=args.batch_size, shuffle=True, drop_last=True)
+                             batch_size=args.batch_size, shuffle=True, drop_last=True)
     print(len(train_loader))
     sample = next(iter(train_loader))
     print(sample)
