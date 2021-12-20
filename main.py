@@ -66,7 +66,7 @@ def train(args, io):
             opt.zero_grad()
 
             start_time = time.time()
-            import pdb;pdb.set_trace()
+            # import pdb;pdb.set_trace()
             logits = model(data)
             loss = criterion(logits, label)
             loss.backward()
@@ -172,9 +172,13 @@ if __name__ == "__main__":
                         choices=['modelnet40'])
     parser.add_argument('--batch_size', type=int, default=32, metavar='batch_size',
                         help='Size of batch)')
+    parser.add_argument('--eval_batch_size', type=int, default=32, metavar='batch_size',
+                        help='Size of batch)')
     parser.add_argument('--test_batch_size', type=int, default=16, metavar='batch_size',
                         help='Size of batch)')
-    parser.add_argument('--epochs', type=int, default=250, metavar='N',
+    parser.add_argument('--epochs', type=int, default=20, metavar='N',
+                        help='number of episode to train ')
+    parser.add_argument('--eval_epoch_interval', type=int, default=1,
                         help='number of episode to train ')
     parser.add_argument('--use_sgd', type=bool, default=True,
                         help='Use SGD')
@@ -194,6 +198,8 @@ if __name__ == "__main__":
                         help='dropout rate')
     parser.add_argument('--model_path', type=str, default='', metavar='N',
                         help='Pretrained model path')
+    parser.add_argument('--tokenizer', type=str, default='microsoft/prophetnet-base-uncased',
+                        help='tokenizer name for decoder')
     args = parser.parse_args()
 
     _init_()

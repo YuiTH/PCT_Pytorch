@@ -56,6 +56,7 @@ parser.add_argument("--local_rank", type=int, default=-1,
                     help="For distributed training: local_rank")
 parser.add_argument('--load_model_path', type=str, default=None)
 parser.add_argument('--load_finetune_path', type=str, default="")
+parser.add_argument('--shapenet_pic_dir', type=str, default="~/data/nrrd_256_filter_div_64_solid/")
 parser.add_argument("--no_cuda", action='store_true', help="Whether not to use CUDA when available")
 # parser.add_argument("--train_steps", default=-1, type=int, help="")
 parser.add_argument("--use_bart", action='store_true', help="Whether to use bart.")
@@ -136,26 +137,26 @@ def main(args):
     bar = tqdm(test_dataloader, total=len(test_dataloader))
     for batch in bar:
         batch = tuple(t.to(device) for t in batch)
-        sample_pcl, sample_cap, sample_attn_mask = batch
-        preds = model.predict(sample_pcl, test_dataset.tokenizer, beam_size=1, max_length=80)
+        sample_pcl, sample_img, sample_cap, sample_attn_mask, sample_idx = batch
+        preds = model.predict(sample_pcl, sample_img, test_dataset.tokenizer, beam_size=1, max_length=80)
         for idx, pred in enumerate(preds):
             pred_text = test_dataset.tokenizer.decode(pred.cpu(), skip_special_tokens=True)
             gold_text = test_dataset.tokenizer.decode(sample_cap[idx].cpu(), skip_special_tokens=True)
-            results.append((pred_text, gold_text))
+            results.append((pred_text, gold_text, sample_idx[idx]))
         # if len(results) >= 40:
         #     break
 
     def format_prediction(prediction):
-        if prediction[0] == 'A':
-            prediction = prediction[1:]
-        return prediction.strip("<s>").strip("</s>")
+        if prediction[0] == 'A' and prediction[1].isupper():
+            prediction = prediction[1:].strip()
+        return prediction.strip("<s>").strip("</s>").replace("\t", " ").replace("\n", " ")
 
     with open(os.path.join(args.output_dir, "test_{}.output".format(str(0))), 'w') as f, open(
             os.path.join(args.output_dir, "test_{}.gold".format(str(0))), 'w') as f1:
-        for idx, (pred, gold) in enumerate(results):
+        for pred, gold, idx in results:
             shape_id = str(test_dataset.get_shape_id(idx))
             f.write(shape_id + '\t' + format_prediction(pred) + '\n')
-            f1.write(shape_id + '\t' + gold + '\n')
+            f1.write(shape_id + '\t' + gold.replace("\t", ' ').replace('\n', ' ') + '\n')
 
 
 if __name__ == '__main__':

@@ -130,9 +130,11 @@ class Text2Cap(Dataset):
         caption_ids = caption_toks.input_ids.squeeze(0)
         attention_mask = caption_toks.attention_mask.squeeze(0)
         img = self.load_image(shape_id).clone()
+        if self.split == 'test':
+            return pointcloud, img, caption_ids, attention_mask, idx
         return pointcloud, img, caption_ids, attention_mask
 
-    @lru_cache(maxsize=100)
+    # @lru_cache(maxsize=100)
     def load_image(self, shape_id):
         image_path = os.path.join(self.args.shapenet_pic_dir, f'{shape_id}.png')
         img = self.pil_loader(image_path)

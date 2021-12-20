@@ -57,11 +57,13 @@ parser.add_argument('--output_dir', type=str, default='./output',
 parser.add_argument("--local_rank", type=int, default=-1,
                     help="For distributed training: local_rank")
 parser.add_argument('--load_model_path', type=str, default=None)
+parser.add_argument('--shapenet_pic_dir', type=str, default="~/data/nrrd_256_filter_div_64_solid/")
 parser.add_argument("--do_train", action='store_true', help="Whether to run training.")
 parser.add_argument("--no_cuda", action='store_true', help="Whether not to use CUDA when available")
 parser.add_argument("--train_steps", default=-1, type=int, help="")
 parser.add_argument("--use_bart", action='store_true', help="Whether to use bart.")
 parser.add_argument("--load_pretrained", action='store_true', help="Whether to use bart.")
+parser.add_argument("--num_workers", default=4, type=int, help="")
 
 args = parser.parse_args()
 
@@ -130,6 +132,7 @@ def main(args):
         # multi-gpu training
         model = torch.nn.DataParallel(model)
 
+    is_main = args.local_rank == -1 or args.local_rank == 0
     if args.do_train:
         # Prepare training data loader
         # dataset
@@ -139,7 +142,7 @@ def main(args):
             train_sampler = RandomSampler(train_dataset)
         else:
             train_sampler = DistributedSampler(train_dataset)
-        train_dataloader = DataLoader(train_dataset, num_workers=24,
+        train_dataloader = DataLoader(train_dataset, num_workers=args.num_workers,
                                       batch_size=args.train_batch_size, sampler=train_sampler, drop_last=True)
         val_dataloader = None
 
@@ -159,22 +162,24 @@ def main(args):
                                                     num_training_steps=t_total)
 
         # Start training
-        logger.info("***** Running training *****")
-        logger.info("  Num examples = %d", len(train_dataset))
-        logger.info("  Batch size = %d", args.train_batch_size)
-        logger.info("  Num epoch = %d", args.num_train_epochs)
+        if is_main:
+            logger.info("***** Running training *****")
+            logger.info("  Num examples = %d", len(train_dataset))
+            logger.info("  Batch size = %d", args.train_batch_size)
+            logger.info("  Num epoch = %d", args.num_train_epochs)
 
         model.train()
         dev_dataset = {}
         nb_tr_examples, nb_tr_steps, tr_loss, global_step, best_bleu, best_loss = 0, 0, 0, 0, 0, 1e6
         # main training loop
         for epoch in range(args.num_train_epochs):
-            bar = tqdm(train_dataloader, total=len(train_dataloader))
+            bar = tqdm(train_dataloader, total=len(train_dataloader), disable=not is_main)
             model.train()
             for batch in bar:
                 batch = tuple(t.to(device) for t in batch)
-                sample_pcl, sample_cap, sample_attn_mask = batch
-                model_output = model(input_pcl=sample_pcl, labels=sample_cap, decoder_attention_mask=sample_attn_mask)
+                sample_pcl, sample_img, sample_cap, sample_attn_mask = batch
+                model_output = model(input_ids=sample_pcl, input_img=sample_img, labels=sample_cap,
+                                     decoder_attention_mask=sample_attn_mask)
                 loss = model_output.loss
 
                 if args.n_gpu > 1:
@@ -195,93 +200,23 @@ def main(args):
                     scheduler.step()
                     global_step += 1
                 if global_step % args.save_interval_step == 0:
-                    # save last checkpoint
-                    last_output_dir = os.path.join(args.output_dir, 'checkpoint-last')
-                    if not os.path.exists(last_output_dir):
-                        os.makedirs(last_output_dir)
-                    model_to_save = model.module if hasattr(model, 'module') else model  # Only save the model it-self
-                    output_model_file = os.path.join(last_output_dir, "pytorch_model.bin")
-                    torch.save(model_to_save.state_dict(), output_model_file)
-                    current_output_dir = os.path.join(args.output_dir,
-                                                      'checkpoint-{}-{}'.format(global_step, train_loss))
-                    print("Saving model checkpoint to {}".format(current_output_dir))
-                    shutil.copytree(last_output_dir, current_output_dir)
-                    # prevent optimizer state from being copy.
-                    output_optimizer_file = os.path.join(args.output_dir, "last_optimizer.bin")
-                    torch.save(optimizer.state_dict(), output_optimizer_file)
-
-            # if args.do_eval and epoch % args.eval_epoch_interval == 0:
-            #     val_dataloader, best_loss = evaluate(args, model, logger, device, best_loss, val_dataloader)
-
-            #         logger.info("  Best ppl:%s", round(np.exp(eval_loss), 5))
-            #         logger.info("  " + "*" * 20)
-            #         best_loss = eval_loss
-            #         # Save best checkpoint for best ppl
-            #         output_dir = os.path.join(args.output_dir, 'checkpoint-best-ppl')
-            #         if not os.path.exists(output_dir):
-            #             os.makedirs(output_dir)
-            #         model_to_save = model.module if hasattr(model, 'module') else model  # Only save the model it-self
-            #         output_model_file = os.path.join(output_dir, "pytorch_model.bin")
-            #         torch.save(model_to_save.state_dict(), output_model_file)
-            #
-            #     # Calculate bleu
-            #     if 'dev_bleu' in dev_dataset:
-            #         eval_examples, eval_data = dev_dataset['dev_bleu']
-            #     else:
-            #         eval_examples = read_examples(args.dev_filename)
-            #         eval_examples = random.sample(eval_examples, min(1000, len(eval_examples)))
-            #         eval_features = convert_examples_to_features(eval_examples, tokenizer, args, stage='test')
-            #         all_source_ids = torch.tensor([f.source_ids for f in eval_features], dtype=torch.long)
-            #         all_source_mask = torch.tensor([f.source_mask for f in eval_features], dtype=torch.long)
-            #         eval_data = TensorDataset(all_source_ids, all_source_mask)
-            #         dev_dataset['dev_bleu'] = eval_examples, eval_data
-            #
-            #     eval_sampler = SequentialSampler(eval_data)
-            #     eval_dataloader = DataLoader(eval_data, sampler=eval_sampler, batch_size=args.eval_batch_size)
-            #
-            #     model.eval()
-            #     p = []
-            #     for batch in eval_dataloader:
-            #         batch = tuple(t.to(device) for t in batch)
-            #         source_ids, source_mask = batch
-            #         with torch.no_grad():
-            #             preds = model(source_ids=source_ids, source_mask=source_mask)
-            #             for pred in preds:
-            #                 t = pred[0].cpu().numpy()
-            #                 t = list(t)
-            #                 if 0 in t:
-            #                     t = t[:t.index(0)]
-            #                 text = tokenizer.decode(t, clean_up_tokenization_spaces=False)
-            #                 p.append(text)
-            #     model.train()
-            #     predictions = []
-            #     with open(os.path.join(args.output_dir, "dev.output"), 'w') as f, open(
-            #             os.path.join(args.output_dir, "dev.gold"), 'w') as f1:
-            #         for ref, gold in zip(p, eval_examples):
-            #             predictions.append(str(gold.idx) + '\t' + ref)
-            #             f.write(str(gold.idx) + '\t' + ref + '\n')
-            #             f1.write(str(gold.idx) + '\t' + gold.target + '\n')
-            #
-            #     (goldMap, predictionMap) = bleu.computeMaps(predictions, os.path.join(args.output_dir, "dev.gold"))
-            #     dev_bleu = round(bleu.bleuFromMaps(goldMap, predictionMap)[0], 2)
-            #     logger.info("  %s = %s " % ("bleu-4", str(dev_bleu)))
-            #     logger.info("  " + "*" * 20)
-            #     if dev_bleu > best_bleu:
-            #         logger.info("  Best bleu:%s", dev_bleu)
-            #         logger.info("  " + "*" * 20)
-            #         best_bleu = dev_bleu
-            #         # Save best checkpoint for best bleu
-            #         output_dir = os.path.join(args.output_dir, 'checkpoint-best-bleu')
-            #         if not os.path.exists(output_dir):
-            #             os.makedirs(output_dir)
-            #         model_to_save = model.module if hasattr(model, 'module') else model  # Only save the model it-self
-            #         output_model_file = os.path.join(output_dir, "pytorch_model.bin")
-            #         torch.save(model_to_save.state_dict(), output_model_file)
-            # else:
-            #     if epoch % args.save_interval == 0:
-            #         output_model_file = os.path.join(args.output_dir, f"checkpoint{epoch}.bin")
-            #         model_to_save = model.module if hasattr(model, 'module') else model  # Only save the model it-self
-            #         torch.save(model_to_save.state_dict(), output_model_file)
+                    if is_main:
+                        # save last checkpoint
+                        last_output_dir = os.path.join(args.output_dir, 'checkpoint-last')
+                        if not os.path.exists(last_output_dir):
+                            os.makedirs(last_output_dir)
+                        model_to_save = model.module if hasattr(model,
+                                                                'module') else model  # Only save the model it-self
+                        output_model_file = os.path.join(last_output_dir, "pytorch_model.bin")
+                        torch.save(model_to_save.state_dict(), output_model_file)
+                        current_output_dir = os.path.join(args.output_dir,
+                                                          'checkpoint-{}-{}'.format(global_step, train_loss))
+                        print("Saving model checkpoint to {}".format(current_output_dir))
+                        shutil.copytree(last_output_dir, current_output_dir)
+                        # prevent optimizer state from being copy.
+                        output_optimizer_file = os.path.join(args.output_dir, "last_optimizer.bin")
+                        torch.save(optimizer.state_dict(), output_optimizer_file)
+                    # torch.distributed.barrier()
 
 
 if __name__ == '__main__':

@@ -3,5 +3,5 @@ ckpt_name=$1
 CUDA_VISIBLE_DEVICES=$2
 python test.py --use_bart --tokenizer \
 facebook/bart-large-cnn  --test_batch_size 32 --output_dir ./output_scratch/$ckpt_name \
---load_finetune_path ./output_scratch/$ckpt_name/pytorch_model.bin
+--load_finetune_path ./output_scratch/$ckpt_name/pytorch_model.bin --shapenet_pic_dir ~/data/nrrd_256_filter_div_64_solid/
 
